@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 20px;
+        }
+        #chat-box {
+            width: 50%;
+            height: 300px;
+            border: 1px solid #ccc;
+            overflow-y: auto;
+            padding: 10px;
+            margin: auto;
+            background: #f9f9f9;
+        }
+        #message-input {
+            width: 70%;
+            padding: 10px;
+        }
+        button {
+            padding: 10px;
+            cursor: pointer;
+        }
+        .msg {
+            text-align: left;
+            margin: 5px;
+            padding: 5px;
+            border-radius: 5px;
+            max-width: 80%;
+        }
+        .msg.sent {
+            background: #daf1da;
+            margin-left: auto;
+        }
+        .msg.received {
+            background: #f1daf1;
+            margin-right: auto;
+        }
+    </style>
+</head>
+<body>
+    <h2>Real-time Chat</h2>
+    <h3>Logged in as: <span id="user-email"></span></h3>
+    <label for="receiver">Send to:</label>
+    <select id="receiver">
+        <option value="test@gmail.com">test@gmail.com</option>
+        <option value="ramesh@gmail.com">ramesh@gmail.com</option>
+    </select>
+    <div id="chat-box"></div>
+    <input type="text" id="message-input" placeholder="Type a message...">
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        var socket = io();
+        var userEmail = "{{ user }}";
+        document.getElementById("user-email").innerText = userEmail;
+
+        function sendMessage() {
+            var messageInput = document.getElementById("message-input");
+            var receiver = document.getElementById("receiver").value;
+            var message = messageInput.value.trim();
+
+            if (message !== "") {
+                socket.emit("send_message", { receiver: receiver, message: message });
+
+                // Append sent message
+                appendMessage(userEmail, message, "sent");
+                messageInput.value = "";
+            }
+        }
+
+        socket.on("receive_message", function(data) {
+            appendMessage(data.sender, data.message, data.sender === userEmail ? "sent" : "received");
+        });
+
+        function appendMessage(sender, message, type) {
+            var chatBox = document.getElementById("chat-box");
+            var msgDiv = document.createElement("div");
+            msgDiv.className = "msg " + type;
+            msgDiv.innerHTML = `<b>${sender}:</b> ${message}`;
+            chatBox.appendChild(msgDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    </script>
+</body>
+</html>
