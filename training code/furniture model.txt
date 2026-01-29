@@ -1,0 +1,166 @@
+# Google Colab Notebook for Training & Auto-Furniture Generation using SUN RGB-D
+
+import os
+import zipfile
+import torch
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+from torch.utils.data import DataLoader, Dataset
+import torch.nn as nn
+import shutil
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+from tqdm import tqdm
+from google.colab import drive
+
+# Step 1: Mount Google Drive
+drive.mount('/content/drive')
+print("Google Drive Mounted Successfully")
+
+# Step 2: Set Dataset Path in Drive
+ZIP_FILE = "/content/drive/My Drive/SUNRGBD.zip"
+DATASET_PATH = "/content/SUNRGBD"
+
+# Step 3: Extract SUN RGB-D Dataset with Error Handling
+try:
+    if not os.path.exists(DATASET_PATH):
+        os.makedirs(DATASET_PATH)
+        with zipfile.ZipFile(ZIP_FILE, 'r') as zip_ref:
+            zip_ref.extractall(DATASET_PATH)
+        print("Dataset Extracted Successfully at", DATASET_PATH)
+    else:
+        print("Dataset already extracted.")
+
+    # Debugging: List extracted files and folders
+    print("Extracted files and folders:")
+    for root, dirs, files in os.walk(DATASET_PATH):
+        print(f"Directory: {root}, Files: {files[:5]} (and more if applicable)")
+
+except zipfile.BadZipFile:
+    print("Error: The ZIP file is corrupted. Please re-upload a valid file.")
+
+# Step 4: Create Custom Dataset Class
+class SUNRGBDDataset(Dataset):
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = root_dir
+        self.transform = transform
+        # Recursively find all images in the dataset
+        self.images = []
+        for root, _, files in os.walk(root_dir):
+            for file in files:
+                if file.endswith('.jpg'):
+                    self.images.append(os.path.join(root, file))
+    
+    def __len__(self):
+        return len(self.images)
+    
+    def __getitem__(self, idx):
+        img_path = self.images[idx]
+        image = Image.open(img_path).convert('RGB')
+        if self.transform:
+            image = self.transform(image)
+        return image
+
+print("Dataset class updated to handle nested directories.")
+
+# Step 5: Define Data Transformations
+transform = transforms.Compose([
+    transforms.Resize((256, 256)),
+    transforms.ToTensor(),
+])
+print("Data transformations defined successfully")
+
+# Step 6: Load Dataset into DataLoader
+# Update to use root DATASET_PATH since images are nested
+try:
+    dataset = SUNRGBDDataset(DATASET_PATH, transform=transform)
+    dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+    print("Dataset loaded successfully with", len(dataset), "images")
+except FileNotFoundError as e:
+    print("Error loading dataset:", e)
+
+# Step 7: Define AI Model (Using U-Net for Better Results)
+class UNet(nn.Module):
+    def __init__(self):
+        super(UNet, self).__init__()
+        # Encoder
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1), nn.ReLU()
+        )
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        self.enc2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1), nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1), nn.ReLU()
+        )
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # Bottleneck
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1), nn.ReLU(),
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1), nn.ReLU()
+        )
+
+        # Decoder
+        self.upconv2 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
+        self.dec2 = nn.Sequential(
+            nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1), nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1), nn.ReLU()
+        )
+
+        self.upconv1 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
+        self.dec1 = nn.Sequential(
+            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1), nn.ReLU()
+        )
+
+        # Output layer
+        self.conv_last = nn.Conv2d(64, 3, kernel_size=1)
+
+    def forward(self, x):
+        # Encoder
+        enc1 = self.enc1(x)
+        enc2 = self.enc2(self.pool1(enc1))
+
+        # Bottleneck
+        bottleneck = self.bottleneck(self.pool2(enc2))
+
+        # Decoder
+        dec2 = self.dec2(torch.cat((self.upconv2(bottleneck), enc2), dim=1))
+        dec1 = self.dec1(torch.cat((self.upconv1(dec2), enc1), dim=1))
+
+        # Output
+        return self.conv_last(dec1)
+
+model = UNet().cuda()
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+print("AI model (U-Net) initialized successfully")
+
+# Step 8: Train the Model
+epochs = 5
+for epoch in range(epochs):
+    epoch_loss = 0
+    for batch in tqdm(dataloader):
+        batch = batch.cuda()
+        output = model(batch)
+        loss = criterion(output, batch)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        epoch_loss += loss.item()
+    print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/len(dataloader)}")
+print("Model training completed successfully")
+
+# Step 9: Save Trained Model to Temporary Location in Colab
+MODEL_SAVE_PATH = "/content/furniture_model.pth"
+torch.save(model.state_dict(), MODEL_SAVE_PATH)
+print(f"Model saved at {MODEL_SAVE_PATH}")
+
+# Step 10: Download Model to Local Disk
+print("Downloading model to your local disk. Please save it manually to your desired path.")
+from google.colab import files
+files.download(MODEL_SAVE_PATH)
